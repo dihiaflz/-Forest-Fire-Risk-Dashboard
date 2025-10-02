@@ -9,13 +9,15 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 from streamlit_autorefresh import st_autorefresh
 import altair as alt
 import pydeck as pdk
+import os
 
 
 
 # ---------- CONFIG ----------
-CLASS_MODEL_PATH = "C:/Users/ASUS/Documents/AI_projects/Prevent forest fire CERIST/app/trained_models/classification_model.pkl"   # your classification model (pickle)
-REG_MODEL_PATH = "C:/Users/ASUS/Documents/AI_projects/Prevent forest fire CERIST/app/trained_models/regression_model.pkl"         # your regression model (pickle)
-CSV_PATH = "C:/Users/ASUS/Documents/AI_projects/Prevent forest fire CERIST/app/testing_data.csv"          # CSV with test rows (features only)
+working_dir = os.path.dirname(os.path.abspath(__file__))
+CLASS_MODEL_PATH = working_dir + "/trained_models/classification_model.pkl"   # classification model (pickle)
+REG_MODEL_PATH = working_dir + "/trained_models/regression_model.pkl"         # regression model (pickle)
+CSV_PATH = working_dir + "/testing_data.csv"          # CSV with test rows (features only)
 AUTO_REFRESH_MS = 300_000   # 5 minutes in milliseconds
 
 
@@ -185,6 +187,17 @@ with col_info:
     )
     df_full = df_full[ordered_cols]
 
+    # Add timestamp
+    df_full["timestamp"] = pd.to_datetime(time.ctime(st.session_state.last_update))
+
+    # Save in a csv file
+    DATABASE_PATH = working_dir + "/database.csv"
+    try:
+        df_full.to_csv(DATABASE_PATH, mode="a", header=not pd.io.common.file_exists(DATABASE_PATH), index=False, encoding="utf-8")
+    except Exception as e:
+        st.error(f"Erreur lors de l'écriture dans la base de données: {e}")
+
+
     def highlight_class(val):
         if val == "Risk":
             return "background-color: #ff4d4d; color: white;"  # rouge
@@ -205,31 +218,30 @@ with col_info:
 
 import altair as alt
 
-# ---- HISTORIQUE ----
-if "history" not in st.session_state:
-    st.session_state["history"] = pd.DataFrame(columns=["time", "sensor_id", "temperature", "humidity"])
+# ---- Global History (from database.csv) ----
 
-now = pd.to_datetime(time.ctime(st.session_state.last_update))
-for r in results:
-    idx = r["sample_idx"]
-    st.session_state["history"] = pd.concat([
-        st.session_state["history"],
-        pd.DataFrame([{
-            "time": now,
-            "sensor_id": r["id"],
-            "temperature": df_test.iloc[idx]["temperature_air_C"], 
-            "humidity": df_test.iloc[idx]["humidity_percent"]   
-        }])
-    ], ignore_index=True)
+try:
+    history = pd.read_csv(DATABASE_PATH, parse_dates=["timestamp"])
+except FileNotFoundError:
+    st.warning("Aucun historique trouvé (database.csv manquant ou vide).")
+    history = pd.DataFrame(columns=["timestamp", "id", "temperature_air_C", "humidity_percent"])
 
-st.session_state["history"] = st.session_state["history"].tail(200)
+# Renommer les colonnes pour les graphes
+history = history.rename(columns={
+    "id": "sensor_id",
+    "temperature_air_C": "temperature",
+    "humidity_percent": "humidity"
+})
+
+# Limiter à 200 dernières entrées (optionnel, pour éviter surcharge graphique)
+history = history.tail(200)
+
+# Formater le temps pour affichage
+history["time_str"] = pd.to_datetime(history["timestamp"]).dt.strftime("%H:%M:%S")
 
 st.subheader("Tendances des métriques avec le temps")
 
 col_temp, col_hum = st.columns(2)
-
-history = st.session_state["history"].copy()
-history["time_str"] = history["time"].dt.strftime("%H:%M:%S")  # format HH:MM:SS
 
 with col_temp:
     st.markdown("**Température (°C)**")
@@ -258,6 +270,7 @@ with col_hum:
         .properties(width="container", height=300)
     )
     st.altair_chart(chart_hum, use_container_width=True)
+
 
 # --- Footer ---
 st.markdown("---")
