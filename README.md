@@ -18,6 +18,16 @@ Historical data is automatically logged every 5 minutes, enabling time-series an
 
 This project combines IoT, Machine Learning, and Data Visualization into a single application, aiming to support smarter and faster decision-making for wildfire prevention
 
+# Notebook & Synthetic Data
+
+The repository also includes the training notebook used to build the AI models.
+
+- The notebook contains the synthetic data generation code used to simulate realistic sensor readings.
+
+- These generated datasets were then exported and used for training the classification and regression models.
+
+- A link to the full generated dataset is provided in the notebook (hosted on Google Drive).
+
 # HOW TO USE :
 1. Clone the repository to your local machine.
 2. Create a virtual environment using the command **python -m venv venv** and then activate it using **venv\Scripts\activate**
