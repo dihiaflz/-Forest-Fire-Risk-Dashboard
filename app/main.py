@@ -127,7 +127,7 @@ for sensor in sensors:
 col_map, col_info = st.columns([1, 1.25])
 
 with col_map:
-    st.subheader("Sensor Locations")
+    st.subheader("Carte de la forêt avec les emplacements des capteurs")
 
     map_df = pd.DataFrame({
         "lat": [s["lat"] for s in results],
@@ -228,7 +228,7 @@ except FileNotFoundError:
 
 # Renommer les colonnes pour les graphes
 history = history.rename(columns={
-    "id": "sensor_id",
+    "id": "id_capteur",
     "temperature_air_C": "temperature",
     "humidity_percent": "humidity"
 })
@@ -239,7 +239,7 @@ history = history.tail(200)
 # Formater le temps pour affichage
 history["time_str"] = pd.to_datetime(history["timestamp"]).dt.strftime("%H:%M:%S")
 
-st.subheader("Tendances des métriques avec le temps")
+st.subheader("Évolution de la température et de l'humidité dans le temps")
 
 col_temp, col_hum = st.columns(2)
 
@@ -251,7 +251,7 @@ with col_temp:
         .encode(
             x=alt.X("time_str:N", title="Temps", axis=alt.Axis(labelAngle=-90)),
             y=alt.Y("temperature:Q", title="Température (°C)"),
-            color="sensor_id:N"
+            color="id_capteur:N"
         )
         .properties(width="container", height=300)
     )
@@ -265,7 +265,7 @@ with col_hum:
         .encode(
             x=alt.X("time_str:N", title="Temps", axis=alt.Axis(labelAngle=-90)),
             y=alt.Y("humidity:Q", title="Humidité (%)"),
-            color="sensor_id:N"
+            color="id_capteur:N"
         )
         .properties(width="container", height=300)
     )
