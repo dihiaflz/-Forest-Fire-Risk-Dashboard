@@ -4,3 +4,5 @@ scikit_learn==1.7.2
 streamlit==1.50.0
 streamlit_autorefresh==1.0.1
 xgboost==3.0.5
+google-api-python-client 
+google-auth

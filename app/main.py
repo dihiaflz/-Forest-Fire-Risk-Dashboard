@@ -3,6 +3,7 @@ import pickle
 import pandas as pd
 import numpy as np
 import time
+import io
 from sklearn.preprocessing import StandardScaler
 from random import randint
 from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -10,6 +11,9 @@ from streamlit_autorefresh import st_autorefresh
 import altair as alt
 import pydeck as pdk
 import os
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 
 
@@ -19,10 +23,48 @@ CLASS_MODEL_PATH = working_dir + "/trained_models/classification_model.pkl"   # 
 REG_MODEL_PATH = working_dir + "/trained_models/regression_model.pkl"         # regression model (pickle)
 CSV_PATH = working_dir + "/testing_data.csv"          # CSV with test rows (features only)
 AUTO_REFRESH_MS = 300_000   # 5 minutes in milliseconds
+HISTORY_CHART_LIMIT = 144   # rows shown on the trend charts
+MAX_STORED_ROWS = 5000      # cap on the Drive CSV so download/upload stays fast as it grows
 
 
-st.set_page_config(page_title="Tableau de bord prévention de feu de forêt de Kendira", layout="wide")
-st.title("Tableau de bord prévention de feu de forêt de Kendira")
+st.set_page_config(page_title="Kendira Forest Fire Prevention Dashboard", layout="wide")
+st.title("Kendira Forest Fire Prevention Dashboard")
+
+# ---------- Google Drive connection (keeps database.csv persistent across restarts/redeploys) ----------
+DRIVE_FILE_ID = st.secrets["drive_file_id"]
+
+@st.cache_resource
+def get_drive_service():
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=creds)
+
+drive_service = get_drive_service()
+
+def load_history_from_drive():
+    """Download the current database.csv from Drive as a DataFrame."""
+    try:
+        request = drive_service.files().get_media(fileId=DRIVE_FILE_ID)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+        return pd.read_csv(buffer, parse_dates=["timestamp"])
+    except Exception as e:
+        st.warning(f"Could not load history from Drive ({e}). Starting with empty history.")
+        return pd.DataFrame()
+
+def save_history_to_drive(df):
+    """Overwrite database.csv on Drive with the given DataFrame."""
+    buffer = io.BytesIO()
+    df.to_csv(buffer, index=False, encoding="utf-8")
+    buffer.seek(0)
+    media = MediaIoBaseUpload(buffer, mimetype="text/csv", resumable=False)
+    drive_service.files().update(fileId=DRIVE_FILE_ID, media_body=media).execute()
 
 # ---------- Load models using pickle ----------
 def load_pickle(path):
@@ -61,13 +103,13 @@ scaler.fit(df_test.values)
 def get_kendira_sensors():
     sensors = [
         {"id": "S1", "lat": 36.540556, "lon": 5.027500},  # Central
-        {"id": "S2", "lat": 36.567583, "lon": 5.027500},  # Nord
-        {"id": "S3", "lat": 36.518033, "lon": 5.027500},  # Sud
-        {"id": "S4", "lat": 36.540556, "lon": 5.061160},  # Est
-        {"id": "S5", "lat": 36.540556, "lon": 4.993840},  # Ouest
-        {"id": "S6", "lat": 36.558574, "lon": 5.049940},  # Nord-Est
-        {"id": "S7", "lat": 36.527042, "lon": 5.044330},  # Sud-Est
-        {"id": "S8", "lat": 36.524340, "lon": 5.007300},  # Sud-Ouest
+        {"id": "S2", "lat": 36.567583, "lon": 5.027500},  # North
+        {"id": "S3", "lat": 36.518033, "lon": 5.027500},  # South
+        {"id": "S4", "lat": 36.540556, "lon": 5.061160},  # East
+        {"id": "S5", "lat": 36.540556, "lon": 4.993840},  # West
+        {"id": "S6", "lat": 36.558574, "lon": 5.049940},  # North-East
+        {"id": "S7", "lat": 36.527042, "lon": 5.044330},  # South-East
+        {"id": "S8", "lat": 36.524340, "lon": 5.007300},  # South-West
     ]
     return sensors
 
@@ -77,8 +119,8 @@ sensors = get_kendira_sensors()
 if "last_update" not in st.session_state:
     st.session_state.last_update = time.time()
 
-# ---------- Manuel refresh button ----------
-if st.button("Prochaine simulation (forcer la mise à jour)"):
+# ---------- Manual refresh button ----------
+if st.button("Run next simulation (force update)"):
     st.session_state.last_update = time.time()
 
 # ---------- Auto-refresh each 5 min ----------
@@ -89,7 +131,7 @@ if time.time() - st.session_state.last_update > (AUTO_REFRESH_MS / 1000.0):
 # ------------ Logic ------------
 results = []
 for sensor in sensors:
-    # Random test line 
+    # Random test line
     idx = randint(0, len(df_test) - 1)
     sample = df_test.iloc[idx]
     X_raw = sample.values.reshape(1, -1)
@@ -127,7 +169,7 @@ for sensor in sensors:
 col_map, col_info = st.columns([1, 1.25])
 
 with col_map:
-    st.subheader("Carte de la forêt avec les emplacements des capteurs")
+    st.subheader("Forest map with sensor locations")
 
     map_df = pd.DataFrame({
         "lat": [s["lat"] for s in results],
@@ -163,10 +205,10 @@ with col_map:
 
     st.pydeck_chart(pdk.Deck(layers=[layer, text_layer], initial_view_state=view_state))
 
-    st.write("**Auto-refresh:** chaque 5 minutes (ou forcer avec le bouton en haut).")
+    st.write("**Auto-refresh:** every 5 minutes (or force it with the button above).")
 
 with col_info:
-    st.subheader("Métriques envoyées par chaque capteur et prédiction correspondante")
+    st.subheader("Metrics sent by each sensor and corresponding prediction")
 
     df_results = pd.DataFrame(results)
 
@@ -190,19 +232,22 @@ with col_info:
     # Add timestamp
     df_full["timestamp"] = pd.to_datetime(time.ctime(st.session_state.last_update))
 
-    # Save in a csv file
-    DATABASE_PATH = working_dir + "/database.csv"
+    # ---- Persist to Google Drive (download current file, append, cap size, re-upload) ----
     try:
-        df_full.to_csv(DATABASE_PATH, mode="a", header=not pd.io.common.file_exists(DATABASE_PATH), index=False, encoding="utf-8")
+        existing_history = load_history_from_drive()
+        full_history = pd.concat([existing_history, df_full], ignore_index=True)
+        full_history = full_history.sort_values("timestamp").tail(MAX_STORED_ROWS)
+        save_history_to_drive(full_history)
     except Exception as e:
-        st.error(f"Erreur lors de l'écriture dans la base de données: {e}")
+        st.error(f"Error writing to Drive: {e}")
+        full_history = df_full  # fall back to this cycle's data so the app doesn't crash
 
 
     def highlight_class(val):
         if val == "Risk":
-            return "background-color: #ff4d4d; color: white;"  # rouge
+            return "background-color: #ff4d4d; color: white;"  # red
         elif val == "No risk":
-            return "background-color: #4CAF50; color: white;"  # vert
+            return "background-color: #4CAF50; color: white;"  # green
         return ""
 
     def color_reg(val):
@@ -218,54 +263,53 @@ with col_info:
 
 import altair as alt
 
-# ---- Global History (from database.csv) ----
+# ---- Global History (already downloaded above when we saved to Drive) ----
 
-try:
-    history = pd.read_csv(DATABASE_PATH, parse_dates=["timestamp"])
-except FileNotFoundError:
-    st.warning("Aucun historique trouvé (database.csv manquant ou vide).")
-    history = pd.DataFrame(columns=["timestamp", "id", "temperature_air_C", "humidity_percent"])
+history = full_history.copy()
+if not history.empty:
+    history = history.sort_values("timestamp").tail(HISTORY_CHART_LIMIT)
 
-# Renommer les colonnes pour les graphes
+# Rename columns for the charts
 history = history.rename(columns={
-    "id": "id_capteur",
+    "id": "sensor_id",
     "temperature_air_C": "temperature",
     "humidity_percent": "humidity"
 })
 
-# Limiter à 200 dernières entrées (optionnel, pour éviter surcharge graphique)
-history = history.tail(200)
+# Format date + time for display so rows from different days are never confused
+# just because the clock time happens to match
+if not history.empty:
+    history["time_str"] = pd.to_datetime(history["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+else:
+    history["time_str"] = []
 
-# Formater le temps pour affichage
-history["time_str"] = pd.to_datetime(history["timestamp"]).dt.strftime("%H:%M:%S")
-
-st.subheader("Évolution de la température et de l'humidité dans le temps")
+st.subheader(f"Temperature and humidity — last {len(history)} readings")
 
 col_temp, col_hum = st.columns(2)
 
 with col_temp:
-    st.markdown("**Température (°C)**")
+    st.markdown("**Temperature (°C)**")
     chart_temp = (
         alt.Chart(history)
         .mark_line(point=True)
         .encode(
-            x=alt.X("time_str:N", title="Temps", axis=alt.Axis(labelAngle=-90)),
-            y=alt.Y("temperature:Q", title="Température (°C)"),
-            color="id_capteur:N"
+            x=alt.X("time_str:N", title="Date & time", sort=None, axis=alt.Axis(labelAngle=-90)),
+            y=alt.Y("temperature:Q", title="Temperature (°C)"),
+            color="sensor_id:N"
         )
         .properties(width="container", height=300)
     )
     st.altair_chart(chart_temp, use_container_width=True)
 
 with col_hum:
-    st.markdown("**Humidité (%)**")
+    st.markdown("**Humidity (%)**")
     chart_hum = (
         alt.Chart(history)
         .mark_line(point=True)
         .encode(
-            x=alt.X("time_str:N", title="Temps", axis=alt.Axis(labelAngle=-90)),
-            y=alt.Y("humidity:Q", title="Humidité (%)"),
-            color="id_capteur:N"
+            x=alt.X("time_str:N", title="Date & time", sort=None, axis=alt.Axis(labelAngle=-90)),
+            y=alt.Y("humidity:Q", title="Humidity (%)"),
+            color="sensor_id:N"
         )
         .properties(width="container", height=300)
     )
@@ -274,6 +318,5 @@ with col_hum:
 
 # --- Footer ---
 st.markdown("---")
-st.write(f"Dernière mise à jour des capteurs: **{time.ctime(st.session_state.last_update)}**")
-st.caption("Ce tableau de bord simule les données enovoyées par les capteurs par choisir aléatoirement une ligne du testing_data.csv pour chaque capteur chaque 5 minutes.")
-
+st.write(f"Last sensor update: **{time.ctime(st.session_state.last_update)}**")
+st.caption("This dashboard simulates data sent by the sensors by randomly picking a row from testing_data.csv for each sensor every 5 minutes.")
