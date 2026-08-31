@@ -78,4 +78,4 @@ You can also run the app inside Docker:
 You can now run the app through the Local URL **localhost:8501**
 
 # Live Demo
-Deployed on Streamlit Community Cloud: *link coming soon*
+Deployed on Streamlit Community Cloud: *https://fire-risk-dashboard.streamlit.app/*
